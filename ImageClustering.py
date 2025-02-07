@@ -1,7 +1,7 @@
-import numpy.linalg as la
 from sklearn.cluster import KMeans
 from Utils.my_Spectral import my_Spectral
-from Utils.my_operator import *
+from Utils.operators import *
+import numpy.linalg as la
 
 
 class ImageClustering():
@@ -13,7 +13,7 @@ class ImageClustering():
         self.threshold = hard_threshold if threshold_type == 'Hard' else soft_threshold
         self.INIT = init
         self.metrics = metrics
-
+        self.mask = None
         self.opt_lam = None
         self.Y_hat = None
         self.A_hat = None
@@ -23,6 +23,7 @@ class ImageClustering():
         self.Records = None
 
     def Init(self, X_vec):
+        # print('Initialization:', self.INIT)
         z_hat = None
         if self.INIT == 'Spectral':
             z_hat = my_Spectral(X_vec, metrics=self.metrics)
@@ -33,22 +34,30 @@ class ImageClustering():
 
         return z_hat
 
-    def fit_predict(self, X_TS, shapes=None, lams=None, sign=True, max_itr=50, tol=1e-5, echo=True):
+    def fit_predict(self, X_TS, shapes=None, lams=None, sign=True, max_itr=50, tol=1e-5, echo=True, mask=False):
         n = X_TS.shape[0]
-        b1, b2, d1, d2 = shapes
-        D1, D2 = b1 * d1, b2 * d2
-        N = n * (b1 * b2) * (d1 * d2)
-        A_hat, B_hat = np.zeros((b1, b2)), np.zeros((d1, d2))
+        shape_X = X_TS[0].shape
+        # b1, b2, d1, d2 = shapes
+        shape_A, shape_B = shapes
+        A_hat, B_hat = np.zeros(shape_A), np.zeros(shape_B)
 
-        X_bar = X_TS - np.mean(X_TS, axis=0)
-        RX_bar = np.asarray([R_opt_pro(X_bar[i], (b1, b2)) for i in range(n)])
+        X_mean = np.mean(X_TS, axis=0)
+        X_bar = X_TS - X_mean  # Centralization
+        self.mask = np.ones_like(X_mean) if mask is False else mask
+        if len(shape_X) == 2:
+            RX_bar = np.asarray([R_opt_pro(X_bar[i], shape_A) for i in range(n)])
+            R_mask = R_opt_pro(self.mask, shape_A)
+        else:
+            RX_bar = np.array([Rearrange_T(X_bar[i], shape_A, shape_B) for i in range(n)])
+            R_mask = Rearrange_T(self.mask, shape_A, shape_B)
 
         # Initialization
-        X_vec = X_bar.reshape(n, D1 * D2)
+        X_vec = X_bar.reshape(n, -1)
         z_hat = self.Init(X_vec)
         obj = np.sum(X_bar ** 2) / n
 
         BICs, Records = [], []
+        N = np.prod(X_TS.shape)
         for lam in lams:
             print(f'Lambda: {lam:.3f}', end='\r')
             for itr in range(max_itr):
@@ -56,7 +65,7 @@ class ImageClustering():
                 # SVD
                 z_hat = z_hat - np.mean(z_hat)
                 XY = np.asarray([z_hat[i] * RX_bar[i] for i in range(n)])
-                M = np.sum(XY, axis=0)
+                M = np.sum(XY, axis=0) * R_mask
                 U, Sigma, Vt = np.linalg.svd(M)
 
                 # Update a
@@ -65,7 +74,7 @@ class ImageClustering():
                 if np.sum(np.abs(a_hat)) == 0:
                     # print('NormError: Too large Lambda')
                     z_hat = np.zeros(shape=(n, 1))
-                    A_hat, B_hat = np.zeros((b1, b2)), np.zeros((d1, d2))
+                    A_hat, B_hat = np.zeros(shape_A), np.zeros(shape_B)
                     obj = float('inf')
                     break
                 a_hat = a_hat / np.linalg.norm(a_hat, 2)
@@ -75,10 +84,10 @@ class ImageClustering():
                 b_hat = b_hat / np.linalg.norm(b_hat, 2)
 
                 # Update z
-                A_hat = Vec_inv(a_hat, b1, b2)
-                B_hat = Vec_inv(b_hat, d1, d2)
+                A_hat = Vec_inv(a_hat, shape_A)
+                B_hat = Vec_inv(b_hat, shape_B)
                 C_hat = np.kron(A_hat, B_hat)
-                den = np.linalg.norm(C_hat, 2) ** 2
+                den = np.linalg.norm(C_hat) ** 2
 
                 u_hat = np.zeros(shape=(n, 1))
                 for i in range(n):
@@ -102,7 +111,7 @@ class ImageClustering():
                 obj = np.sum((X_bar - X_hat) ** 2) / n
                 # obj = np.sum((M - Sigma[0] * a_hat.dot(b_hat.T)) ** 2)
                 change_rate = np.abs(obj - obj_old) / obj_old
-                print('Iteration {} | Loss: {:.5f}'.format(itr+1, obj)) if echo else None
+                print('Iteration {} | Loss: {:.4f}'.format(itr+1, obj)) if echo else None
 
                 # if change_rate < tol:
                 #     print('*** Algorithm converges on the objective function. ***')
@@ -111,7 +120,7 @@ class ImageClustering():
             Records.append([lam, z_hat, A_hat, B_hat])
 
             AL0 = np.sum(A_hat != 0)
-            BIC = np.log(obj * n / N) + np.log(np.log(b1 * b2)) * np.log(N) / N * AL0
+            BIC = np.log(obj * n / N) + np.log(np.log(np.prod(shape_A))) * np.log(N) / N * AL0
             BICs.append(BIC)
 
         opt_BIC = np.argmin(BICs)

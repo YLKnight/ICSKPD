@@ -1,16 +1,16 @@
 from sklearn.cluster import KMeans
 from Utils.my_Spectral import my_Spectral
 from ImageClustering import ImageClustering
-from Visualization import *
+from Utils.Visualization import *
 from Utils.criterion import error, Acc_cls
+from Utils.Generate_data import Gnrt_shape, Generate_data_log_normal
 from time import time
 
 # Pre-settings
-keyParameters = {'Shape': 'butterfly',
-                 'Sigma of Noise': 3,
-                 'Samples Size': 500}
-Parameters = {'Sigma of Image': 1,
-              'Intensity of Signal': 1,
+keyParameters = {'Shape': 'OneCircle',
+                 'Sigma of Noise': 1,
+                 'Samples Size': 1000}
+Parameters = {'Sigma of Image': 2,
               'Power of Image': 7,
               'Power of Block': 3,
               'Proportion of Positive': 0.5,
@@ -24,11 +24,20 @@ n = keyParameters['Samples Size']
 pw = Parameters['Power of Image']
 pw_block = Parameters['Power of Block']
 sigma_img = Parameters['Sigma of Image']
-int_sgn = Parameters['Intensity of Signal']
 p = Parameters['Proportion of Positive']
+D1, D2 = np.power(2, pw), np.power(2, pw)
+b1, b2 = np.power(2, pw - pw_block), np.power(2, pw - pw_block)
+d1, d2 = np.power(2, pw_block), np.power(2, pw_block)
 
-theta1, theta2, diff, Y, X_TS = Gnrt(n, p, pw, sigma_img, int_sgn, sigma_ns)
-D1, D2 = theta1.shape  # Size of Image
+if shape == 'OneCircle':
+    signal = Gnrt_shape(D1, D2, shape, radius=11)
+elif shape == 'ThreeCircles':
+    signal = Gnrt_shape(D1, D2, shape, radius=[8, 6, 4])
+else:  # butterfly
+    signal = Gnrt_shape(D1, D2, shape)
+
+theta1, theta2, Y, X_TS = Generate_data_log_normal(signal, n=n, positive_rate=p, sigma_of_image=sigma_img, sigma_of_noise=sigma_ns, seed=0)
+D1, D2 = theta1.shape
 p1, p2 = np.power(2, pw - pw_block), np.power(2, pw - pw_block)  # Size of B
 d1, d2 = np.power(2, pw_block), np.power(2, pw_block)  # Size of A
 shapes = [p1, p2, d1, d2]
@@ -36,8 +45,8 @@ shapes = [p1, p2, d1, d2]
 ''' Show '''
 show = True
 if show:
-    Vis_mean_diff(theta1, theta2, diff, pw_block)  # Show means and signal
-    Vis_samples(X_TS[0], X_TS[-1], diff)  # Show samples
+    Vis_mean_diff(theta1, theta2, signal, pw_block)  # Show means and signal
+    Vis_samples(X_TS[0], X_TS[-1], signal)  # Show samples
 
 ''' Baseline '''
 X_vec = X_TS.reshape(n, D1 * D2)
@@ -54,14 +63,15 @@ tol = Parameters['Early Stop Tolerance']  # If used
 # Model
 IC = ImageClustering(n_clusters=2)
 stt = time()
-CI_labels, C_hat = IC.fit_predict(X_TS, shapes=[p1, p2, d1, d2], lams=lam_lst, max_itr=max_itr, tol=tol, echo=False)
+CI_labels, C_hat = IC.fit_predict(X_TS, shapes=[(p1, p2), (d1, d2)], lams=lam_lst, max_itr=max_itr, tol=tol, echo=False)
 stp = time()
 opt_lam = IC.opt_lam
 acc = Acc_cls(Y, CI_labels)
-FPR, TPR = error(C_hat, diff)
+FPR, TPR = error(C_hat, signal)
 print(f'ICSKPD | Optimal lambda: {opt_lam} | Accuracy: {acc:.3f}, FPR: {FPR:.3f}, TPR: {TPR:.3f}')
 
 ''' Visualization of Detection Result'''
 if show:
     A_hat, B_hat = IC.A_hat, IC.B_hat
     Vis_detection(A_hat, B_hat, C_hat, d2)
+    # np.savetxt('ICSKPD_'+shape+'_log_normal.txt', C_hat)

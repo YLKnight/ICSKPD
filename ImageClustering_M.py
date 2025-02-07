@@ -1,7 +1,8 @@
+import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.linear_model import LinearRegression
 from Utils.my_Spectral import my_Spectral
-from Utils.my_operator import *
+from Utils.operators import *
 
 
 class ImageClustering_M():
@@ -34,28 +35,29 @@ class ImageClustering_M():
 
         return z_hat
 
-    def fit_predict(self, X_TS, shapes=None, lams=None, sign=True, max_itr=10, tol=1e-5, echo=True, record=False, Y=None):
+    def fit_predict(self, X_TS, shapes=None, lams=None, sign=True, max_itr=10, tol=1e-5, echo=True, record=False):
         n = X_TS.shape[0]
-        b1, b2, d1, d2 = shapes
-        D1, D2 = b1 * d1, b2 * d2
-        N = n * (b1 * b2) * (d1 * d2)
-        A_hat, B_hat = np.zeros((b1, b2)), np.zeros((d1, d2))
+        shape_X = X_TS[0].shape
+        # b1, b2, d1, d2 = shapes
+        shape_A, shape_B = shapes
+        A_hat, B_hat = np.zeros(shape_A), np.zeros(shape_B)
 
         X_bar = X_TS - np.mean(X_TS, axis=0)
-        RX_bar = np.asarray([R_opt_pro(X_bar[i], (b1, b2)) for i in range(n)])
+        RX_bar = np.asarray([R_opt_pro(X_bar[i], shape_A) for i in range(n)])
 
         # Initialization
-        X_vec = X_bar.reshape(n, D1 * D2)
+        X_vec = X_bar.reshape(n, -1)
         Y_init = self.Init(X_vec)
 
         Y_hat = num2dum(Y_init.reshape(-1, 1))
         cats = np.array(range(self.K - 1))
-        aks_hat = np.zeros((b1 * b2, self.K - 1))
-        bks_hat = np.zeros((d1 * d2, self.K - 1))
+        aks_hat = np.zeros((np.prod(shape_A), self.K - 1))
+        bks_hat = np.zeros((np.prod(shape_B), self.K - 1))
         mu = np.zeros(self.K - 1)
 
         obj = np.sum(X_bar ** 2) / n
         BICs, Records = [], []
+        N = np.prod(X_TS.shape)
         for lam in lams:
             Norm_Error = False
             print(f'Lambda: {lam:.3f}', end='\r')
@@ -86,8 +88,8 @@ class ImageClustering_M():
                     if np.sum(np.abs(a_hat)) == 0:
                         # print('NormError: Too large Lambda')
                         Y_num_hat = np.zeros_like(Y_init)
-                        aks_hat = np.zeros((b1 * b2, self.K - 1))
-                        bks_hat = np.zeros((d1 * d2, self.K - 1))
+                        aks_hat = np.zeros((np.prod(shape_A), self.K - 1))
+                        bks_hat = np.zeros((np.prod(shape_B), self.K - 1))
                         obj = float('inf')
                         Norm_Error = True
                         break
@@ -113,7 +115,7 @@ class ImageClustering_M():
                     reg = LinearRegression().fit(X_reg, y_reg)
                     u_hat[i, :] = reg.coef_[0]
 
-                Y_num_hat = KMeans(n_clusters=self.K).fit_predict(u_hat)
+                Y_num_hat = KMeans(n_clusters=self.K, random_state=666).fit_predict(u_hat)
                 Y_hat = num2dum(Y_num_hat)
 
                 ''' mu_k '''
@@ -131,8 +133,8 @@ class ImageClustering_M():
                 X_hat_ks = []
                 for k in cats:
                     X_hat = np.zeros_like(X_TS)
-                    A_hat = Vec_inv(aks_hat[:, k:(k + 1)], b1, b2)
-                    B_hat = Vec_inv(bks_hat[:, k:(k + 1)], d1, d2)
+                    A_hat = Vec_inv(aks_hat[:, k:(k + 1)], shape_A)
+                    B_hat = Vec_inv(bks_hat[:, k:(k + 1)], shape_B)
                     C_hat = np.kron(A_hat, B_hat)
                     for i in range(n):
                         X_hat[i] = Y_hat[i, k] * mu[k] * C_hat
@@ -149,7 +151,7 @@ class ImageClustering_M():
             Records.append([lam, Y_num_hat, A_hat, B_hat])
 
             AL0 = np.sum(A_hat != 0)
-            BIC = np.log(obj * n / N) + np.log(np.log(b1 * b2)) * np.log(N) / N * AL0
+            BIC = np.log(obj * n / N) + np.log(np.log(np.prod(shape_A))) * np.log(N) / N * AL0
             BICs.append(BIC)
 
         opt_BIC = np.argmin(BICs)
